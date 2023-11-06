@@ -1,104 +1,113 @@
 const express = require('express');
 const app = express();
 const morgan = require('morgan');
-const cors = require('cors')
-
+const cors = require('cors');
+require('dotenv').config();
+const Person = require('./models/person');
 app.use(express.json());
 app.use(cors());
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body '));
-morgan.token('body', (req, res) => JSON.stringify(req.body));
+morgan.token('body', (req,) => JSON.stringify(req.body));
+// app.use(express.static('build'));
 
-let persons = [
-  {
-    "id": 1,
-    "name": "Arto Hellas",
-    "number": "040-123456"
-  },
-  {
-    "id": 2,
-    "name": "Ada Lovelace",
-    "number": "39-44-5323523"
-  },
-  {
-    "id": 3,
-    "name": "Dan Abramov",
-    "number": "12-43-234345"
-  },
-  {
-    "id": 4,
-    "name": "Mary Poppendieck",
-    "number": "39-23-6423122"
-  }
-];
+const unknownEndPoint = (req, res, next) => {
+  res.status(404).send({ error: 'unknown endpoint' });
+  next();
+};
 
-app.get("/", (req, res) => {
-  res.send("<h1>Hello World!</h1>");
+const errorHandler = (err, req, res, next) => {
+  console.error(err);
+  if (err.name === 'CastError')
+    return res.status(400).send({ error: 'malformatted id' });
+  else if (err.name === 'ValidationError')
+    return res.status(400).send({ error: err.message });
+  else if (err.name === 'MongoError')
+    return res.status(400).send({ error: err.message });
+  next();
+}
+
+app.get('/', (req, res) => {
+  res.send('<h1>Hello World!</h1>');
 });
 
-app.get("/api/persons", (req, res) => {
-  res.json(persons);
+// Updated to use MONGODB
+app.get("/api/persons", (req, res, next) => {
+  Person.find({}).then(result => {
+    console.log(result)
+    res.json(result)
+  }).catch(error => {
+    console.log(error);
+    next(error);
+  })
 });
 
-app.get('/api/persons/:id', (req, res) => {
+app.get('/api/persons/:id', (req, res, next) => {
   const id = Number(req.params.id);
-  const person = persons.find(person => person.id === id);
-  if (person) {
-    res.json(person);
-  } else {
-    res.status(404).json({ error: "Person not found" });
-  }
+  Person.findById(id).then(result => {
+    if (result) {
+      res.json(result)
+    } else {
+      res.status(404).end()
+    }
+  }).catch(error => {
+    console.log(error);
+    next(error);
+    // res.status(400).send({ error: "malformatted id" });
+  })
 });
 
-app.get('/info', (req, res) => {
-  res.send(`<p>Phonebook has info for ${persons.length} persons</p> <p>${new Date()}</p>`);
+// updated to use mongodb
+app.get('/info', (req, res, next) => {
+  Person.find({}).then(persons => {
+    res.send(`<p>Phonebook has info for ${persons.length} persons</p> <p>${new Date()}</p>`);
+  }).catch(
+    err => next(err)
+  );
 });
 
-app.delete("/api/persons/:id", (req, res) => {
-  const id = Number(req.params.id);
-  persons = persons.filter(person => person.id !== id);
-  res.status(204).end();
+// updated to use mongodb
+app.delete('/api/persons/:id', (req, res, next) => {
+  const id = req.params.id;
+  Person.findByIdAndDelete(id).then(() => {
+    res.status(204).end();
+  }).catch(err => {
+    console.log(err);
+    next(err)
+  })
 });
 
-app.post('/api/persons', (req, res) => {
+// updated to use mongodb
+app.post('/api/persons', (req, res, next) => {
   const body = req.body;
-
-  if (!body.name) {
-    return res.status(400).json({ error: "Name not found" });
-  }
-  if (!body.number) {
-    return res.status(400).json({ error: "Number not found" });
-  }
-  if (persons.some(person => person.name === body.name)) {
-    return res.status(400).json({ error: "Name already exists" });
-  }
-  
-  const person = {
+  const person = new Person({
     name: body.name,
     number: body.number,
-    id: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)
-  };
-  persons = persons.concat(person);
-  res.json(person);
+  });
+  person.save().then(savedPerson => {
+    res.json(savedPerson.toJSON());
+  }).catch(error => {
+    console.log(error);
+    next(error)
+  });
 });
 
-app.patch('/api/persons/:id', (req, res) => {
+// updated to use mongodb
+app.put('/api/persons/:id', (req, res, next) => {
   const id = Number(req.params.id);
-  const body = req.body;
-  const person = persons.find(person => person.id === id);
-  if (!person) {
-    return res.status(404).json({ error: "Person not found" });
+  const person = {
+    name: req.body.name,
+    number: req.body.number,
   }
-  if (!body.name) {
-    return res.status(400).json({ error: "Name not found" });
-  }
-  if (!body.number) {
-    return res.status(400).json({ error: "Number not found" });
-  }
-  person.name = body.name;
-  person.number = body.number;
-  res.json(person);
-});
+  Person.findByIdAndUpdate(id, person, { new: true, runValidators: true, context: 'query' }).then(result => {
+    res.json(result);
+  }).catch(err => {
+    next(err);
+  })
+})
 
+
+app.use(unknownEndPoint);
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
